@@ -12,9 +12,9 @@ source "$ROOT/version.env"
 # Sparkle checks updates against this EdDSA public key; the private half lives in
 # the login keychain and never leaves this machine. The feed is served straight
 # from the repository so no extra hosting is needed.
-# This fork leaves the feed empty by default: upstream's feed would offer upstream
-# releases, which would replace the A50 X support. Set ASTROBAR_FEED_URL to opt in.
-FEED_URL="${ASTROBAR_FEED_URL:-}"
+# Set ASTROBAR_FEED_URL to an empty string to build without an update feed:
+# a local build of a fork would otherwise be offered the official releases.
+FEED_URL="${ASTROBAR_FEED_URL-https://raw.githubusercontent.com/nichtlegacy/AstroBar/main/appcast.xml}"
 SPARKLE_PUBLIC_KEY="AUirFpMVvlCOQcflFJ5exmSeZmJ/CwevT5+vkHvQs/8="
 SPARKLE_FRAMEWORK="$ROOT/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
 
