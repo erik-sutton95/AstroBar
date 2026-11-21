@@ -29,7 +29,7 @@ struct DevicePane: View {
                     LabeledContent("Auto-shutoff timer", value: timer == 0 ? "Off" : "\(timer) min")
                 }
             } header: {
-                Text("Astro A50 (Gen 4)")
+                Text(monitor.isLogitechModel ? monitor.modelName : "Astro A50 (Gen 4)")
             } footer: {
                 Text("The headset only reports values while running through the base station. Plugged in by USB cable it charges but exposes no control interface.")
             }

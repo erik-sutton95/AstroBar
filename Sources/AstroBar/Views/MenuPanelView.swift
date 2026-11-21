@@ -56,15 +56,24 @@ struct MenuPanelView: View {
     private func body(for status: ConnectionStatus) -> some View {
         switch status {
         case .connected:
-            VStack(spacing: 10) {
-                OutputVolumeView(monitor: monitor)
-                EqualizerView(monitor: monitor)
-                MixView(monitor: monitor)
-                MicrophoneView(monitor: monitor)
-                StreamMixView(monitor: monitor)
-                FooterView(monitor: monitor, onOpenSettings: onOpenSettings)
+            if monitor.isLogitechModel {
+                // A50 X / Gen 5: a different protocol with its own controls.
+                VStack(spacing: 10) {
+                    HeadsetVolumeView(monitor: monitor)
+                    FooterView(monitor: monitor, onOpenSettings: onOpenSettings)
+                }
+                .padding(12)
+            } else {
+                VStack(spacing: 10) {
+                    OutputVolumeView(monitor: monitor)
+                    EqualizerView(monitor: monitor)
+                    MixView(monitor: monitor)
+                    MicrophoneView(monitor: monitor)
+                    StreamMixView(monitor: monitor)
+                    FooterView(monitor: monitor, onOpenSettings: onOpenSettings)
+                }
+                .padding(12)
             }
-            .padding(12)
         case .cableMode:
             disconnected(
                 icon: "cable.connector",

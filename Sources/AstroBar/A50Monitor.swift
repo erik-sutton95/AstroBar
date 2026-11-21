@@ -46,6 +46,19 @@ final class A50Monitor {
     var systemVolume: Double = 0
     private(set) var hasAudioDevice = false
 
+    // A50 X / A50 Gen 5 (Logitech protocol)
+    /// True while the connected base station is an A50 X or A50 Gen 5. Those
+    /// speak a different protocol and expose a different set of controls.
+    private(set) var isLogitechModel = false
+    /// Name of the connected model, for the panel header.
+    private(set) var modelName = "ASTRO A50"
+    /// Headset master volume, 0…21 (the wheel's steps).
+    var headsetVolume: Double = 0
+    /// Game/voice mix position, 0 (all voice) … 12 (all game).
+    private(set) var chatMix: Int?
+    /// True once the Mac's volume keys are being routed to the headset.
+    private(set) var volumeKeysActive = false
+
     /// How long the charge will last, or how long it still needs to fill up,
     /// estimated from the observed rate. Nil until enough has been measured.
     private(set) var batteryProjection: BatteryEstimator.Projection?
@@ -73,6 +86,11 @@ final class A50Monitor {
     var settings: AppSettings?
 
     private let device = A50Device()
+    private let xDevice = A50XDevice()
+    private let volumeKeys = VolumeKeyTap()
+    private let volumeHUD = VolumeHUD()
+    /// Level to return to when the mute key is pressed a second time.
+    private var volumeBeforeMute: Int?
     private var pollTask: Task<Void, Never>?
     private var loadTask: Task<Void, Never>?
     private var started = false
@@ -189,6 +207,22 @@ final class A50Monitor {
             }
         }
         Task { await device.start() }
+
+        xDevice.setConnectionChangeHandler { [weak self] connected in
+            Task { @MainActor in
+                await self?.handleLogitechConnectionChange(connected)
+            }
+        }
+        xDevice.setMessageHandler { [weak self] message in
+            Task { @MainActor in
+                self?.handleLogitechMessage(message)
+            }
+        }
+        Task { await xDevice.start() }
+
+        volumeKeys.handler = { [weak self] key, isDown in
+            self?.handleVolumeKey(key, isDown: isDown) ?? false
+        }
         startPolling()
     }
 
@@ -207,13 +241,15 @@ final class A50Monitor {
             status = .connected
             lastError = nil
             loadAll()
-        } else {
+        } else if !xDevice.isConnected {
             await refreshDisconnectedStatus()
         }
     }
 
     private func tick() async {
-        if device.isConnected {
+        if xDevice.isConnected {
+            await refreshLogitech()
+        } else if device.isConnected {
             await refreshDynamic()
         } else {
             await refreshDisconnectedStatus()
@@ -221,6 +257,9 @@ final class A50Monitor {
     }
 
     private func refreshDisconnectedStatus() async {
+        isLogitechModel = false
+        modelName = "ASTRO A50"
+        chatMix = nil
         if USBPresence.cableModeConnected() {
             status = .cableMode
         } else if status != .scanning || battery != nil {
@@ -230,6 +269,114 @@ final class A50Monitor {
         headset = nil
         batteryProjection = nil
         batteryEstimator.reset()
+    }
+
+    // MARK: - A50 X / A50 Gen 5
+
+    private func handleLogitechConnectionChange(_ connected: Bool) async {
+        if connected {
+            let productID = xDevice.productID ?? A50X.a50XProductID
+            isLogitechModel = true
+            modelName = A50X.modelName(productID: productID)
+            deviceInfo = DeviceInfo(vendorID: A50X.vendorID, productID: productID)
+            baseFirmware = nil
+            headsetFirmware = nil
+            autoShutoffTimer = nil
+            status = .connected
+            lastError = nil
+            await refreshLogitech()
+        } else if !device.isConnected {
+            await refreshDisconnectedStatus()
+        }
+    }
+
+    /// Polls the values these base stations expose. Volume and mix also arrive
+    /// as pushes, so this mostly keeps the battery current.
+    private func refreshLogitech() async {
+        do {
+            let reading = try await xDevice.battery()
+            battery = reading.status
+            // These stations do not report whether the headset is powered on,
+            // so it is treated as linked whenever the base answers.
+            headset = HeadsetStatus(isLinked: true, isDocked: reading.isDocked)
+            headsetVolume = Double(try await xDevice.volume())
+            chatMix = try? await xDevice.chatMix()
+            if status != .connected { status = .connected }
+            lastError = nil
+        } catch {
+            note(error)
+        }
+        enableVolumeKeysIfPossible()
+        checkLowBattery()
+        updateBatteryProjection()
+    }
+
+    private func handleLogitechMessage(_ message: A50XMessage) {
+        switch message.command {
+        case A50XCommand.volume.rawValue:
+            if let level = A50XValue.volume(message.payload) { headsetVolume = Double(level) }
+        case A50XCommand.chatMix.rawValue:
+            if let value = A50XValue.chatMix(message.payload) { chatMix = value }
+        default:
+            break
+        }
+    }
+
+    func commitHeadsetVolume() {
+        let level = Int(headsetVolume.rounded())
+        write { try await self.xDevice.setVolume(level) }
+    }
+
+    private func setHeadsetVolume(_ level: Int) {
+        let clamped = max(A50X.volumeRange.lowerBound, min(A50X.volumeRange.upperBound, level))
+        guard clamped != Int(headsetVolume.rounded()) else { return }
+        headsetVolume = Double(clamped)
+        commitHeadsetVolume()
+    }
+
+    // MARK: - Volume keys
+
+    /// Whether macOS has granted the permission the volume keys need.
+    var volumeKeysPermitted: Bool { VolumeKeyTap.hasPermission }
+
+    func requestVolumeKeyPermission() {
+        VolumeKeyTap.requestPermission()
+    }
+
+    /// The tap can only be created once the Accessibility permission exists,
+    /// so this is retried on every poll until it succeeds.
+    private func enableVolumeKeysIfPossible() {
+        guard !volumeKeysActive, VolumeKeyTap.hasPermission else { return }
+        volumeKeysActive = volumeKeys.start()
+    }
+
+    /// Volume keys go to the headset only while an A50 X / Gen 5 is connected
+    /// and is the Mac's current output. Otherwise they pass through untouched.
+    private func handleVolumeKey(_ key: VolumeKeyTap.Key, isDown: Bool) -> Bool {
+        guard isLogitechModel, status == .connected, AudioDeviceVolume.defaultOutputIsA50() else {
+            return false
+        }
+        guard isDown else { return true }
+
+        let current = Int(headsetVolume.rounded())
+        switch key {
+        case .up:
+            volumeBeforeMute = nil
+            setHeadsetVolume(current + 1)
+        case .down:
+            volumeBeforeMute = nil
+            setHeadsetVolume(current - 1)
+        case .mute:
+            if let previous = volumeBeforeMute {
+                volumeBeforeMute = nil
+                setHeadsetVolume(previous)
+            } else if current > 0 {
+                volumeBeforeMute = current
+                setHeadsetVolume(0)
+            }
+        }
+        volumeHUD.show(level: Int(headsetVolume.rounded()), of: A50X.volumeRange.upperBound)
+        return true
     }
 
     // MARK: - Reads
@@ -445,7 +592,7 @@ final class A50Monitor {
                 completion?(true)
             } catch {
                 note(error)
-                if device.isConnected {
+                if device.isConnected, !isLogitechModel {
                     loadAll()
                 }
                 completion?(false)

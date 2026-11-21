@@ -120,3 +120,20 @@ enum AudioDeviceVolume {
         return size > 0
     }
 }
+
+extension AudioDeviceVolume {
+    /// True when the Mac's current default output is one of the A50's devices,
+    /// i.e. when the volume keys are meant for the headset.
+    static func defaultOutputIsA50() -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var device = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device)
+        guard status == noErr, let name = name(of: device) else { return false }
+        return name.localizedCaseInsensitiveContains("A50")
+    }
+}

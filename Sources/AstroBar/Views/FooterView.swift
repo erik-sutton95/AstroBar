@@ -53,17 +53,21 @@ struct FooterView: View {
             }
 
             HStack(spacing: 8) {
-                Button {
-                    save()
-                } label: {
-                    Label(saveState?.title ?? "Save", systemImage: saveState?.symbol ?? "internaldrive")
-                        .contentTransition(.identity)
+                // The A50 X / Gen 5 apply values as they are set; there is
+                // nothing to persist separately.
+                if !monitor.isLogitechModel {
+                    Button {
+                        save()
+                    } label: {
+                        Label(saveState?.title ?? "Save", systemImage: saveState?.symbol ?? "internaldrive")
+                            .contentTransition(.identity)
+                    }
+                    .tint(saveState?.tint)
+                    .disabled(saveState == .saving)
+                    .help("Persist current values to the headset so they survive a power cycle.")
+                    .accessibilityLabel("Save to headset")
+                    .accessibilityValue(saveState?.title ?? "")
                 }
-                .tint(saveState?.tint)
-                .disabled(saveState == .saving)
-                .help("Persist current values to the headset so they survive a power cycle.")
-                .accessibilityLabel("Save to headset")
-                .accessibilityValue(saveState?.title ?? "")
 
                 Spacer()
 
