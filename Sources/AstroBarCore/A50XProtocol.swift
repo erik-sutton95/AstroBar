@@ -22,6 +22,12 @@ public enum A50X {
     /// Game/voice mix: 0 is all voice, 6 the centre, 12 all game.
     public static let chatMixRange = 0 ... 12
 
+    /// Sidetone (how much of your own voice you hear): 0 is off, 6 the most.
+    public static let sidetoneRange = 0 ... 6
+
+    /// Brightness of the base station's light, in percent.
+    public static let dockLightRange = 0 ... 100
+
     static let reportID: UInt8 = 0x02
     static let marker: UInt8 = 0x0C
     /// The length byte counts the three header bytes after it plus the payload.
@@ -42,6 +48,25 @@ public enum A50XCommand: UInt8, Sendable {
     case volume = 0x08
     case sidetone = 0x09
     case chatMix = 0x0A
+    case equalizer = 0x0D
+    case dockLight = 0x0F
+    case noiseGate = 0x14
+}
+
+/// Microphone noise gate. Only the values confirmed on hardware are named;
+/// the device has further modes whose ids are not known yet.
+public enum A50XNoiseGate: UInt8, CaseIterable, Sendable {
+    case off = 0x00
+    case night = 0x01
+    case tournament = 0x04
+
+    public var displayName: String {
+        switch self {
+        case .off: "Off"
+        case .night: "Night"
+        case .tournament: "Tournament"
+        }
+    }
 }
 
 /// A decoded frame, whether it answers a request or was pushed by the device.
@@ -63,8 +88,10 @@ public struct A50XMessage: Equatable, Sendable {
 public enum A50XFrame {
     /// Handle used for reads. Any value works; the device echoes it back.
     static let readHandle: UInt8 = 0x0C
-    /// Handle G HUB uses when it sets the volume.
+    /// Handles G HUB uses for writes. The device only echoes them back.
     static let volumeSetHandle: UInt8 = 0x1B
+    static let settingSetHandle: UInt8 = 0x1C
+    static let noiseGateSetHandle: UInt8 = 0x2D
 
     public static func encode(command: UInt8, handle: UInt8, payload: [UInt8] = []) -> [UInt8] {
         var frame: [UInt8] = [
@@ -101,6 +128,27 @@ public enum A50XValue {
         guard payload.count >= 3 else { return nil }
         let level = Int(payload[2])
         return A50X.volumeRange.contains(level) ? level : nil
+    }
+
+    /// Sidetone payload as read from an A50 X: `[01, 01, ff, level]`. The
+    /// write payload is `[01, ff, level]`; the level is the last byte in both.
+    public static func sidetone(_ payload: [UInt8]) -> Int? {
+        guard payload.count >= 3, let last = payload.last else { return nil }
+        let level = Int(last)
+        return A50X.sidetoneRange.contains(level) ? level : nil
+    }
+
+    /// Dock light payload: `[brightness percent]`.
+    public static func dockLight(_ payload: [UInt8]) -> Int? {
+        guard let raw = payload.first else { return nil }
+        let value = Int(raw)
+        return A50X.dockLightRange.contains(value) ? value : nil
+    }
+
+    /// Noise gate payload: `[mode id]`. Returned raw, since not every mode
+    /// the device can report has a known name.
+    public static func noiseGate(_ payload: [UInt8]) -> UInt8? {
+        payload.first
     }
 
     /// Chat mix payload: `[position]`.

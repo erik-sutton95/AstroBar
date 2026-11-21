@@ -60,6 +60,7 @@ struct MenuPanelView: View {
                 // A50 X / Gen 5: a different protocol with its own controls.
                 VStack(spacing: 10) {
                     HeadsetVolumeView(monitor: monitor)
+                    HeadsetSettingsView(monitor: monitor)
                     FooterView(monitor: monitor, onOpenSettings: onOpenSettings)
                 }
                 .padding(12)

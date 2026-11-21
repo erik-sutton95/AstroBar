@@ -49,6 +49,20 @@ struct A50XTests {
         #expect(A50XValue.chatMix(message.payload) == 6)
     }
 
+    @Test("Settings read from an A50 X decode to their values")
+    func settings() {
+        #expect(A50XValue.sidetone([0x01, 0x01, 0xff, 0x06]) == 6)
+        #expect(A50XValue.dockLight([0x64]) == 100)
+        #expect(A50XValue.noiseGate([0x00]) == A50XNoiseGate.off.rawValue)
+    }
+
+    @Test("Setting sidetone matches the frame G HUB sends")
+    func encodeSidetoneSet() {
+        let frame = A50XFrame.encode(
+            command: A50XCommand.sidetone.rawValue, handle: A50XFrame.settingSetHandle, payload: [0x01, 0xff, 6])
+        #expect(frame == padded([0x02, 0x0c, 0x06, 0x00, 0x09, 0x1c, 0x01, 0xff, 0x06]))
+    }
+
     @Test("A bare acknowledgement has no payload")
     func acknowledgement() throws {
         let message = try #require(A50XFrame.decode(padded([0x02, 0x0c, 0x03, 0x00, 0x08, 0x1b])))

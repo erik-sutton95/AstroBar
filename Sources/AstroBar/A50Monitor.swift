@@ -56,6 +56,12 @@ final class A50Monitor {
     var headsetVolume: Double = 0
     /// Game/voice mix position, 0 (all voice) … 12 (all game).
     private(set) var chatMix: Int?
+    /// Sidetone level 0…6, nil until the device has reported it.
+    var sidetone: Double?
+    /// Base station light brightness 0…100, nil until reported.
+    var dockLight: Double?
+    /// Raw noise gate mode id, nil until reported.
+    private(set) var noiseGateRaw: UInt8?
     /// True once the Mac's volume keys are being routed to the headset.
     private(set) var volumeKeysActive = false
 
@@ -260,6 +266,9 @@ final class A50Monitor {
         isLogitechModel = false
         modelName = "ASTRO A50"
         chatMix = nil
+        sidetone = nil
+        dockLight = nil
+        noiseGateRaw = nil
         if USBPresence.cableModeConnected() {
             status = .cableMode
         } else if status != .scanning || battery != nil {
@@ -285,6 +294,7 @@ final class A50Monitor {
             status = .connected
             lastError = nil
             await refreshLogitech()
+            await loadLogitechSettings()
         } else if !device.isConnected {
             await refreshDisconnectedStatus()
         }
@@ -311,8 +321,39 @@ final class A50Monitor {
         updateBatteryProjection()
     }
 
+    /// Settings that only change when someone changes them: read once on
+    /// connect, then kept current by the frames the device pushes.
+    private func loadLogitechSettings() async {
+        sidetone = (try? await xDevice.sidetone()).map { Double($0) }
+        dockLight = (try? await xDevice.dockLight()).map { Double($0) }
+        noiseGateRaw = try? await xDevice.noiseGate()
+    }
+
+    func commitSidetone() {
+        guard let sidetone else { return }
+        let level = Int(sidetone.rounded())
+        write { try await self.xDevice.setSidetone(level) }
+    }
+
+    func commitDockLight() {
+        guard let dockLight else { return }
+        let percent = Int(dockLight.rounded())
+        write { try await self.xDevice.setDockLight(percent) }
+    }
+
+    func setLogitechNoiseGate(_ mode: A50XNoiseGate) {
+        noiseGateRaw = mode.rawValue
+        write { try await self.xDevice.setNoiseGate(mode) }
+    }
+
     private func handleLogitechMessage(_ message: A50XMessage) {
         switch message.command {
+        case A50XCommand.sidetone.rawValue:
+            if let level = A50XValue.sidetone(message.payload) { sidetone = Double(level) }
+        case A50XCommand.dockLight.rawValue:
+            if let value = A50XValue.dockLight(message.payload) { dockLight = Double(value) }
+        case A50XCommand.noiseGate.rawValue:
+            if let raw = A50XValue.noiseGate(message.payload) { noiseGateRaw = raw }
         case A50XCommand.volume.rawValue:
             if let level = A50XValue.volume(message.payload) { headsetVolume = Double(level) }
         case A50XCommand.chatMix.rawValue:

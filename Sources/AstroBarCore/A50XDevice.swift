@@ -114,6 +114,57 @@ public actor A50XDevice {
             payload: [0xFF, UInt8(clamped)]))
     }
 
+    // MARK: - Settings
+
+    private func clamp(_ value: Int, to range: ClosedRange<Int>) -> UInt8 {
+        UInt8(max(range.lowerBound, min(range.upperBound, value)))
+    }
+
+    /// Sidetone level, 0 (off) … 6.
+    public func sidetone() async throws -> Int {
+        guard let level = A50XValue.sidetone(try await read(.sidetone)) else {
+            throw A50Error.malformedResponse
+        }
+        return level
+    }
+
+    public func setSidetone(_ level: Int) async throws {
+        try await write(A50XFrame.encode(
+            command: A50XCommand.sidetone.rawValue,
+            handle: A50XFrame.settingSetHandle,
+            payload: [0x01, 0xFF, clamp(level, to: A50X.sidetoneRange)]))
+    }
+
+    /// Brightness of the base station's light, 0…100.
+    public func dockLight() async throws -> Int {
+        guard let value = A50XValue.dockLight(try await read(.dockLight)) else {
+            throw A50Error.malformedResponse
+        }
+        return value
+    }
+
+    public func setDockLight(_ percent: Int) async throws {
+        try await write(A50XFrame.encode(
+            command: A50XCommand.dockLight.rawValue,
+            handle: A50XFrame.settingSetHandle,
+            payload: [clamp(percent, to: A50X.dockLightRange)]))
+    }
+
+    /// Raw noise gate mode id; see `A50XNoiseGate` for the named ones.
+    public func noiseGate() async throws -> UInt8 {
+        guard let raw = A50XValue.noiseGate(try await read(.noiseGate)) else {
+            throw A50Error.malformedResponse
+        }
+        return raw
+    }
+
+    public func setNoiseGate(_ mode: A50XNoiseGate) async throws {
+        try await write(A50XFrame.encode(
+            command: A50XCommand.noiseGate.rawValue,
+            handle: A50XFrame.noiseGateSetHandle,
+            payload: [mode.rawValue]))
+    }
+
     /// Game/voice mix position, 0 (all voice) … 12 (all game).
     public func chatMix() async throws -> Int {
         guard let value = A50XValue.chatMix(try await read(.chatMix)) else {
