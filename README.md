@@ -7,7 +7,7 @@
 Battery, equalizer, mix and microphone — read *and* written straight over USB HID.
 No Logitech G HUB, no Astro Command Center, no background service.
 <br>
-Experimental support for the A50 X and A50 (Gen 5) — see [Supported headsets](#supported-headsets).
+Also supports the A50 X, and the A50 (Gen 5) experimentally — see [Supported headsets](#supported-headsets).
 
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Swift 6.2](https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white)](https://swift.org)
@@ -66,7 +66,7 @@ The project stays deliberately:
   is what an audience hears: Mic, Chat, Game, Aux.
 - **Automatic updates** — signature-verified, through Sparkle.
 - **Diagnostic CLI** — `astrobar-cli` speaks the same protocol from a terminal.
-- **A50 X and A50 Gen 5 (experimental)** — battery, headset volume, sidetone,
+- **A50 X, and A50 Gen 5 (experimental)** — battery, headset volume, sidetone,
   noise gate and the base station light, with the Mac's volume keys optionally
   driving the headset. See [Supported headsets](#supported-headsets).
 
@@ -81,7 +81,7 @@ The project stays deliberately:
 | Headset | USB id | Status | What works |
 |---|---|---|---|
 | **A50 Gen 4** | `9886:002c` | Fully supported, developed and tested on this hardware | Everything on this page |
-| **A50 X** | `046d:0b0b` | Experimental, contributed and tested by an A50 X owner | Battery, headset volume, game/voice mix (read-only), sidetone, noise gate, base station light, volume keys |
+| **A50 X** | `046d:0b0b` | Supported, contributed and tested on hardware by an A50 X owner | Battery, headset volume, game/voice mix (read-only), sidetone, noise gate, base station light, volume keys |
 | **A50 Gen 5** | `046d:0b1c` | Experimental, **untested** — same protocol as the A50 X, no unit on hand | Same as the A50 X, on paper |
 
 The Gen 4 and the Logitech-era models speak two unrelated protocols, so each
@@ -90,10 +90,11 @@ equalizer, a writable game/voice mix, firmware versions, and a way to tell
 whether the headset is powered on — these base stations answer the same either
 way, so the panel shows the headset as on whenever the base responds.
 
-On the A50 X, reading every value and *setting the volume* were confirmed on
-hardware. *Writing* sidetone, noise gate and the base station light uses the
-frames [HeadsetControl](https://github.com/Sapd/HeadsetControl) verified on a
-Gen 5. If you own either model, a report in
+On the A50 X, everything in the table was confirmed on hardware, reads and
+writes. The Gen 5 uses the same frames, which
+[HeadsetControl](https://github.com/Sapd/HeadsetControl) verified on that model,
+but AstroBar itself has not run against one. The maintainer owns a Gen 4 only,
+so if you own either Logitech-era model, a report in
 [Issues](https://github.com/nichtlegacy/AstroBar/issues) with the output of
 `astrobar-cli x-status` and `x-probe` is the most useful thing you can send.
 

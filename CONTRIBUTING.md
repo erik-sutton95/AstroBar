@@ -4,7 +4,7 @@ Thanks for your interest in improving AstroBar — contributions, feedback and h
 reports are very welcome.
 
 AstroBar is a native macOS menu bar app for the **Astro A50 (Gen 4)** wireless headset
-and base station, with experimental support for the **A50 X** and **A50 (Gen 5)**. It
+and base station, with support for the **A50 X** and, untested, the **A50 (Gen 5)**. It
 talks to the base station directly over USB HID. The Gen 4 wire protocol was
 reverse-engineered by [tdryer/eh-fifty](https://github.com/tdryer/eh-fifty), the one the
 A50 X and Gen 5 speak by [Sapd/HeadsetControl](https://github.com/Sapd/HeadsetControl),
@@ -50,8 +50,8 @@ make icon                   # regenerate the app icon (.icns)
 ## Device families
 
 The maintainer owns a Gen 4 only. The A50 X / Gen 5 path was contributed by an A50 X
-owner and cannot be checked here, so changes to it need a note in the pull request on
-which model they were tested on.
+owner, who tested it on that hardware. It cannot be checked here, so changes to it need
+a note in the pull request on which model they were tested on.
 
 Each family is one case of `DeviceFamily` in `AstroBarCore`, with the capabilities the UI
 asks for. Do not branch on a model in a view — add a capability instead. A new family
