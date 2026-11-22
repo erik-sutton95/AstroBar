@@ -13,6 +13,10 @@ public enum A50X {
     public static let gen5ProductID = 0x0B1C
     public static let productIDs = [a50XProductID, gen5ProductID]
 
+    /// The one vendor-defined HID collection both models expose; the other
+    /// interfaces are audio and consumer controls.
+    public static let vendorUsagePage = 0xFF32
+
     /// Reports are a fixed 64 bytes, report id included.
     public static let reportLength = 64
 

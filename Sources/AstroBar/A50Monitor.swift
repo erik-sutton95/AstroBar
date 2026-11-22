@@ -3,26 +3,18 @@ import Foundation
 import Observation
 import SwiftUI
 
-/// Connection state shown in the UI.
-enum ConnectionStatus: Equatable {
-    case scanning
-    case connected
-    case cableMode
-    case disconnected
-}
-
 /// The app's single source of truth. Owns the `A50Device`, polls live values,
 /// and applies user edits optimistically.
 @MainActor
 @Observable
 final class A50Monitor {
-    // Connection
-    private(set) var status: ConnectionStatus = .scanning
-    private(set) var lastError: String?
+    // Connection. The state below is not private(set): A50Monitor+Logitech.swift writes it too.
+    var status: ConnectionStatus = .scanning
+    var lastError: String?
 
     // Live power state
-    private(set) var battery: BatteryStatus?
-    private(set) var headset: HeadsetStatus?
+    var battery: BatteryStatus?
+    var headset: HeadsetStatus?
 
     // Equalizer
     var activePreset: Int = 1
@@ -46,24 +38,10 @@ final class A50Monitor {
     var systemVolume: Double = 0
     private(set) var hasAudioDevice = false
 
-    // A50 X / A50 Gen 5 (Logitech protocol)
-    /// True while the connected base station is an A50 X or A50 Gen 5. Those
-    /// speak a different protocol and expose a different set of controls.
-    private(set) var isLogitechModel = false
-    /// Name of the connected model, for the panel header.
-    private(set) var modelName = "ASTRO A50"
-    /// Headset master volume, 0…21 (the wheel's steps).
-    var headsetVolume: Double = 0
-    /// Game/voice mix position, 0 (all voice) … 12 (all game).
-    private(set) var chatMix: Int?
-    /// Sidetone level 0…6, nil until the device has reported it.
-    var sidetone: Double?
-    /// Base station light brightness 0…100, nil until reported.
-    var dockLight: Double?
-    /// Raw noise gate mode id, nil until reported.
-    private(set) var noiseGateRaw: UInt8?
-    /// True once the Mac's volume keys are being routed to the headset.
-    private(set) var volumeKeysActive = false
+    /// A50 X / A50 Gen 5 state; non-nil exactly while such a base station is
+    /// connected. Only `syncLogitechSession()` creates or drops it.
+    var logitech: LogitechSession?
+    let volumeKeys = VolumeKeyRouter()
 
     /// How long the charge will last, or how long it still needs to fill up,
     /// estimated from the observed rate. Nil until enough has been measured.
@@ -83,22 +61,20 @@ final class A50Monitor {
     }
 
     // Info
-    private(set) var deviceInfo: DeviceInfo?
-    private(set) var baseFirmware: FirmwareVersion?
-    private(set) var headsetFirmware: FirmwareVersion?
-    private(set) var autoShutoffTimer: Int?
+    var deviceInfo: DeviceInfo?
+    var baseFirmware: FirmwareVersion?
+    var headsetFirmware: FirmwareVersion?
+    var autoShutoffTimer: Int?
 
     /// User preferences (set by AppDelegate); drives the low-battery alert.
     var settings: AppSettings?
 
-    private let device = A50Device()
-    private let xDevice = A50XDevice()
-    private let volumeKeys = VolumeKeyTap()
-    private let volumeHUD = VolumeHUD()
-    /// Level to return to when the mute key is pressed a second time.
-    private var volumeBeforeMute: Int?
+    let device = A50Device()
+    let xDevice = A50XDevice()
+    /// Set when the Gen 4 has to be re-read once the X is out of the way.
+    var gen4LoadDeferred = false
     private var pollTask: Task<Void, Never>?
-    private var loadTask: Task<Void, Never>?
+    var loadTask: Task<Void, Never>?
     private var started = false
     private var lowBatteryAlarm = LowBatteryAlarm(threshold: 15)
     private var batteryEstimator = BatteryEstimator(store: .userDefaults())
@@ -213,22 +189,7 @@ final class A50Monitor {
             }
         }
         Task { await device.start() }
-
-        xDevice.setConnectionChangeHandler { [weak self] connected in
-            Task { @MainActor in
-                await self?.handleLogitechConnectionChange(connected)
-            }
-        }
-        xDevice.setMessageHandler { [weak self] message in
-            Task { @MainActor in
-                self?.handleLogitechMessage(message)
-            }
-        }
-        Task { await xDevice.start() }
-
-        volumeKeys.handler = { [weak self] key, isDown in
-            self?.handleVolumeKey(key, isDown: isDown) ?? false
-        }
+        startLogitech()
         startPolling()
     }
 
@@ -244,6 +205,13 @@ final class A50Monitor {
 
     private func handleConnectionChange(_ connected: Bool) async {
         if connected {
+            // With an X active its panel is shown; the Gen 4 is read as soon as
+            // the X goes away (see `syncLogitechSession`).
+            if xDevice.isConnected {
+                gen4LoadDeferred = true
+                return
+            }
+            gen4LoadDeferred = false
             status = .connected
             lastError = nil
             loadAll()
@@ -253,171 +221,33 @@ final class A50Monitor {
     }
 
     private func tick() async {
-        if xDevice.isConnected {
-            await refreshLogitech()
+        syncLogitechSession()
+        if let logitech {
+            await refreshLogitech(logitech)
         } else if device.isConnected {
             await refreshDynamic()
         } else {
             await refreshDisconnectedStatus()
         }
+        updateVolumeKeys()
     }
 
-    private func refreshDisconnectedStatus() async {
-        isLogitechModel = false
-        modelName = "ASTRO A50"
-        chatMix = nil
-        sidetone = nil
-        dockLight = nil
-        noiseGateRaw = nil
+    func refreshDisconnectedStatus() async {
+        // The error or callback asking for this may be out of date: a connected base keeps its panel.
+        guard !device.isConnected, !xDevice.isConnected else { return }
         if USBPresence.cableModeConnected() {
             status = .cableMode
         } else if status != .scanning || battery != nil {
             status = .disconnected
         }
+        resetBatteryTracking()
+    }
+
+    func resetBatteryTracking() {
         battery = nil
         headset = nil
         batteryProjection = nil
         batteryEstimator.reset()
-    }
-
-    // MARK: - A50 X / A50 Gen 5
-
-    private func handleLogitechConnectionChange(_ connected: Bool) async {
-        if connected {
-            let productID = xDevice.productID ?? A50X.a50XProductID
-            isLogitechModel = true
-            modelName = A50X.modelName(productID: productID)
-            deviceInfo = DeviceInfo(vendorID: A50X.vendorID, productID: productID)
-            baseFirmware = nil
-            headsetFirmware = nil
-            autoShutoffTimer = nil
-            status = .connected
-            lastError = nil
-            await refreshLogitech()
-            await loadLogitechSettings()
-        } else if !device.isConnected {
-            await refreshDisconnectedStatus()
-        }
-    }
-
-    /// Polls the values these base stations expose. Volume and mix also arrive
-    /// as pushes, so this mostly keeps the battery current.
-    private func refreshLogitech() async {
-        do {
-            let reading = try await xDevice.battery()
-            battery = reading.status
-            // These stations do not report whether the headset is powered on,
-            // so it is treated as linked whenever the base answers.
-            headset = HeadsetStatus(isLinked: true, isDocked: reading.isDocked)
-            headsetVolume = Double(try await xDevice.volume())
-            chatMix = try? await xDevice.chatMix()
-            if status != .connected { status = .connected }
-            lastError = nil
-        } catch {
-            note(error)
-        }
-        enableVolumeKeysIfPossible()
-        checkLowBattery()
-        updateBatteryProjection()
-    }
-
-    /// Settings that only change when someone changes them: read once on
-    /// connect, then kept current by the frames the device pushes.
-    private func loadLogitechSettings() async {
-        sidetone = (try? await xDevice.sidetone()).map { Double($0) }
-        dockLight = (try? await xDevice.dockLight()).map { Double($0) }
-        noiseGateRaw = try? await xDevice.noiseGate()
-    }
-
-    func commitSidetone() {
-        guard let sidetone else { return }
-        let level = Int(sidetone.rounded())
-        write { try await self.xDevice.setSidetone(level) }
-    }
-
-    func commitDockLight() {
-        guard let dockLight else { return }
-        let percent = Int(dockLight.rounded())
-        write { try await self.xDevice.setDockLight(percent) }
-    }
-
-    func setLogitechNoiseGate(_ mode: A50XNoiseGate) {
-        noiseGateRaw = mode.rawValue
-        write { try await self.xDevice.setNoiseGate(mode) }
-    }
-
-    private func handleLogitechMessage(_ message: A50XMessage) {
-        switch message.command {
-        case A50XCommand.sidetone.rawValue:
-            if let level = A50XValue.sidetone(message.payload) { sidetone = Double(level) }
-        case A50XCommand.dockLight.rawValue:
-            if let value = A50XValue.dockLight(message.payload) { dockLight = Double(value) }
-        case A50XCommand.noiseGate.rawValue:
-            if let raw = A50XValue.noiseGate(message.payload) { noiseGateRaw = raw }
-        case A50XCommand.volume.rawValue:
-            if let level = A50XValue.volume(message.payload) { headsetVolume = Double(level) }
-        case A50XCommand.chatMix.rawValue:
-            if let value = A50XValue.chatMix(message.payload) { chatMix = value }
-        default:
-            break
-        }
-    }
-
-    func commitHeadsetVolume() {
-        let level = Int(headsetVolume.rounded())
-        write { try await self.xDevice.setVolume(level) }
-    }
-
-    private func setHeadsetVolume(_ level: Int) {
-        let clamped = max(A50X.volumeRange.lowerBound, min(A50X.volumeRange.upperBound, level))
-        guard clamped != Int(headsetVolume.rounded()) else { return }
-        headsetVolume = Double(clamped)
-        commitHeadsetVolume()
-    }
-
-    // MARK: - Volume keys
-
-    /// Whether macOS has granted the permission the volume keys need.
-    var volumeKeysPermitted: Bool { VolumeKeyTap.hasPermission }
-
-    func requestVolumeKeyPermission() {
-        VolumeKeyTap.requestPermission()
-    }
-
-    /// The tap can only be created once the Accessibility permission exists,
-    /// so this is retried on every poll until it succeeds.
-    private func enableVolumeKeysIfPossible() {
-        guard !volumeKeysActive, VolumeKeyTap.hasPermission else { return }
-        volumeKeysActive = volumeKeys.start()
-    }
-
-    /// Volume keys go to the headset only while an A50 X / Gen 5 is connected
-    /// and is the Mac's current output. Otherwise they pass through untouched.
-    private func handleVolumeKey(_ key: VolumeKeyTap.Key, isDown: Bool) -> Bool {
-        guard isLogitechModel, status == .connected, AudioDeviceVolume.defaultOutputIsA50() else {
-            return false
-        }
-        guard isDown else { return true }
-
-        let current = Int(headsetVolume.rounded())
-        switch key {
-        case .up:
-            volumeBeforeMute = nil
-            setHeadsetVolume(current + 1)
-        case .down:
-            volumeBeforeMute = nil
-            setHeadsetVolume(current - 1)
-        case .mute:
-            if let previous = volumeBeforeMute {
-                volumeBeforeMute = nil
-                setHeadsetVolume(previous)
-            } else if current > 0 {
-                volumeBeforeMute = current
-                setHeadsetVolume(0)
-            }
-        }
-        volumeHUD.show(level: Int(headsetVolume.rounded()), of: A50X.volumeRange.upperBound)
-        return true
     }
 
     // MARK: - Reads
@@ -425,10 +255,16 @@ final class A50Monitor {
     /// Cheap values that change at runtime.
     func refreshDynamic() async {
         do {
-            battery = try await device.batteryStatus()
-            headset = try await device.headsetStatus()
+            // An X that connected during one of these reads owns the panel now.
+            let charge = try await device.batteryStatus()
+            guard logitech == nil else { return }
+            battery = charge
+            let link = try await device.headsetStatus()
+            guard logitech == nil else { return }
+            headset = link
             if status != .connected { status = .connected }
         } catch {
+            guard logitech == nil else { return }
             note(error)
         }
         refreshVolume()
@@ -441,7 +277,7 @@ final class A50Monitor {
     /// A stale reading must not reach the estimator: it would sit at a fixed
     /// percentage for as long as the headset is off and then jump when it comes
     /// back, which reads as an enormous change over that whole gap.
-    private func updateBatteryProjection() {
+    func updateBatteryProjection() {
         guard let battery, !batteryIsStale, let profile = powerState.batteryProfile else {
             batteryProjection = nil
             batteryEstimator.record(percent: battery?.chargePercent ?? 0, profile: nil)
@@ -454,7 +290,7 @@ final class A50Monitor {
 
     /// Fire a one-shot notification when the battery crosses below the
     /// configured threshold (re-arms once it recovers or starts charging).
-    private func checkLowBattery() {
+    func checkLowBattery() {
         guard let settings, settings.lowBatteryNotify, let battery, !batteryIsStale else { return }
         if lowBatteryAlarm.threshold != settings.lowBatteryThreshold {
             lowBatteryAlarm = LowBatteryAlarm(threshold: settings.lowBatteryThreshold)
@@ -495,8 +331,9 @@ final class A50Monitor {
             if Task.isCancelled { throw CancellationError() }
         }
         do {
-            battery = try await device.batteryStatus()
-            headset = try await device.headsetStatus()
+            let (charge, link) = (try await device.batteryStatus(), try await device.headsetStatus())
+            try checkpoint()
+            (battery, headset) = (charge, link)
             activePreset = try await device.activeEQPreset()
             for preset in A50Limits.eqPresets {
                 try checkpoint()
@@ -516,14 +353,18 @@ final class A50Monitor {
             alertVolume = try await device.alertVolume()
             micEQ = try await device.micEQ()
             noiseGate = try await device.noiseGateMode()
-            autoShutoffTimer = try? await device.autoShutoffTimer()
-            deviceInfo = try? await device.deviceInfo()
-            baseFirmware = try? await device.baseFirmwareVersion()
-            headsetFirmware = try? await device.headsetFirmwareVersion()
+            let timer = try? await device.autoShutoffTimer()
+            let info = try? await device.deviceInfo()
+            let base = try? await device.baseFirmwareVersion()
+            let headsetVersion = try? await device.headsetFirmwareVersion()
+            // Published together and only if still current: these describe the
+            // device in Settings, and another family may have taken over since.
+            try checkpoint()
+            (autoShutoffTimer, deviceInfo, baseFirmware, headsetFirmware) = (timer, info, base, headsetVersion)
         } catch is CancellationError {
             // Superseded by a newer load; keep whatever state it collected.
         } catch {
-            note(error)
+            if !Task.isCancelled { note(error) }
         }
         refreshVolume()
     }
@@ -553,7 +394,7 @@ final class A50Monitor {
             }
             presetBands[preset] = bands
         } catch {
-            note(error)
+            if !Task.isCancelled, logitech == nil { note(error) }
         }
     }
 
@@ -629,13 +470,12 @@ final class A50Monitor {
         Task {
             do {
                 try await operation()
-                lastError = nil
+                // A Gen 4 write that finishes after an X took over says nothing about the X.
+                if logitech == nil { lastError = nil }
                 completion?(true)
             } catch {
-                note(error)
-                if device.isConnected, !isLogitechModel {
-                    loadAll()
-                }
+                if logitech == nil { note(error) }
+                if device.isConnected, logitech == nil { loadAll() }
                 completion?(false)
             }
         }
@@ -647,7 +487,7 @@ final class A50Monitor {
         lastError = message
     }
 
-    private func note(_ error: Error) {
+    func note(_ error: Error) {
         if let a50 = error as? A50Error {
             if case .deviceNotConnected = a50 {
                 Task { await refreshDisconnectedStatus() }

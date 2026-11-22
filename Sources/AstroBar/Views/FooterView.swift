@@ -53,9 +53,10 @@ struct FooterView: View {
             }
 
             HStack(spacing: 8) {
-                // The A50 X / Gen 5 apply values as they are set; there is
-                // nothing to persist separately.
-                if !monitor.isLogitechModel {
+                // Families without this capability apply values as they are
+                // set; there is nothing to persist separately. With nothing
+                // connected the button stays, as it always has.
+                if monitor.family?.capabilities.contains(.saveToDevice) ?? true {
                     Button {
                         save()
                     } label: {

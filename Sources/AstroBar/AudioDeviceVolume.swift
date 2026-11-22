@@ -1,3 +1,4 @@
+import AstroBarCore
 import CoreAudio
 import Foundation
 
@@ -122,9 +123,12 @@ enum AudioDeviceVolume {
 }
 
 extension AudioDeviceVolume {
-    /// True when the Mac's current default output is one of the A50's devices,
-    /// i.e. when the volume keys are meant for the headset.
-    static func defaultOutputIsA50() -> Bool {
+    /// True when the Mac's current default output is an A50 X / A50 Gen 5, i.e.
+    /// when the volume keys are meant for that headset.
+    ///
+    /// Decided by the USB ids in the device's model UID. An output that does
+    /// not carry them keeps its volume keys: a name alone proves nothing.
+    static func defaultOutputIsLogitechA50() -> Bool {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultOutputDevice,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -133,7 +137,8 @@ extension AudioDeviceVolume {
         var size = UInt32(MemoryLayout<AudioDeviceID>.size)
         let status = AudioObjectGetPropertyData(
             AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device)
-        guard status == noErr, let name = name(of: device) else { return false }
-        return name.localizedCaseInsensitiveContains("A50")
+        guard status == noErr,
+              let modelUID = stringProperty(kAudioDevicePropertyModelUID, of: device) else { return false }
+        return AudioModelUID.isLogitechA50(modelUID)
     }
 }

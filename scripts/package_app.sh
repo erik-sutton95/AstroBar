@@ -55,7 +55,9 @@ done
 GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
 UPDATER_KEYS=""
-if [ -n "$FEED_URL" ]; then
+if [ -z "$FEED_URL" ]; then
+    echo "› No update feed (ASTROBAR_FEED_URL is empty): this build will not check for updates."
+else
     UPDATER_KEYS="    <key>SUFeedURL</key><string>${FEED_URL}</string>
     <key>SUPublicEDKey</key><string>${SPARKLE_PUBLIC_KEY}</string>
     <key>SUEnableAutomaticChecks</key><true/>"

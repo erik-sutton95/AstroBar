@@ -3,8 +3,9 @@ import SwiftUI
 
 /// Controls for the A50 X / A50 Gen 5: the headset's own master volume, the
 /// game/voice mix it reports, and whether the Mac's volume keys are routed to it.
-struct HeadsetVolumeView: View {
+struct LogitechVolumeView: View {
     let monitor: A50Monitor
+    let session: LogitechSession
 
     var body: some View {
         Card {
@@ -16,13 +17,14 @@ struct HeadsetVolumeView: View {
                     range: Double(A50X.volumeRange.lowerBound) ... Double(A50X.volumeRange.upperBound),
                     step: 1,
                     value: Binding(
-                        get: { monitor.headsetVolume },
-                        set: { monitor.headsetVolume = $0 }),
+                        get: { session.headsetVolume },
+                        set: { session.headsetVolume = $0 }),
                     valueLabel: { Self.percentLabel(Int($0.rounded())) },
-                    onCommit: { _ in monitor.commitHeadsetVolume() })
+                    onCommit: { _ in session.commitHeadsetVolume() },
+                    onEditingChanged: { session.setVolumeDragging($0) })
                     .help("The headset's own volume, the same level its wheel changes.")
 
-                if let mix = monitor.chatMix {
+                if let mix = session.chatMix {
                     HStack {
                         Text("Game / Voice").font(.callout)
                         Spacer()
@@ -38,23 +40,32 @@ struct HeadsetVolumeView: View {
                 volumeKeys
             }
         }
+        // A panel that closes mid-drag never reports the drag as ended.
+        .onDisappear { session.setVolumeDragging(false) }
     }
 
-    @ViewBuilder
     private var volumeKeys: some View {
-        if monitor.volumeKeysActive {
-            Label("Volume keys control the headset", systemImage: "keyboard")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .help("Applies while the A50 is the Mac's sound output.")
-        } else {
-            HStack {
-                Label("Volume keys need Accessibility access", systemImage: "keyboard")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Allow…") { monitor.requestVolumeKeyPermission() }
-                    .controlSize(.small)
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle("Volume keys control the headset", isOn: Binding(
+                get: { monitor.settings?.routeVolumeKeys ?? false },
+                set: { enabled in
+                    monitor.settings?.routeVolumeKeys = enabled
+                    monitor.updateVolumeKeys()
+                }))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .font(.callout)
+                .help("Applies while the headset is the Mac's sound output. Needs Accessibility access.")
+
+            if monitor.volumeKeys.state == .needsPermission {
+                HStack {
+                    Label("Volume keys need Accessibility access", systemImage: "keyboard")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Allow…") { monitor.volumeKeys.requestPermission() }
+                        .controlSize(.small)
+                }
             }
         }
     }

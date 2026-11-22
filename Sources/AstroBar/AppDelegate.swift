@@ -142,7 +142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(statusLineItem())
         menu.addItem(.separator())
 
-        if monitor.status == .connected, !monitor.isLogitechModel {
+        if monitor.status == .connected, monitor.capabilities.contains(.equalizerPresets) {
             addPresetItems(to: menu)
             menu.addItem(.separator())
         }

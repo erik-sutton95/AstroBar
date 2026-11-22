@@ -56,11 +56,11 @@ struct MenuPanelView: View {
     private func body(for status: ConnectionStatus) -> some View {
         switch status {
         case .connected:
-            if monitor.isLogitechModel {
+            if let logitech = monitor.logitech {
                 // A50 X / Gen 5: a different protocol with its own controls.
                 VStack(spacing: 10) {
-                    HeadsetVolumeView(monitor: monitor)
-                    HeadsetSettingsView(monitor: monitor)
+                    LogitechVolumeView(monitor: monitor, session: logitech)
+                    LogitechSettingsView(session: logitech)
                     FooterView(monitor: monitor, onOpenSettings: onOpenSettings)
                 }
                 .padding(12)

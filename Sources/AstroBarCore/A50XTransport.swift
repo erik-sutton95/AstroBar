@@ -31,6 +31,7 @@ public final class A50XTransport: @unchecked Sendable {
     }
 
     /// Called (off the main thread) whenever the device connects or disconnects.
+    /// Like `onMessage`, set it before `start()`: it is read without a lock.
     public var onConnectionChange: (@Sendable (Bool) -> Void)?
 
     /// Called (off the main thread) for every frame that carries a value,
@@ -72,6 +73,7 @@ public final class A50XTransport: @unchecked Sendable {
             [
                 kIOHIDVendorIDKey: A50X.vendorID,
                 kIOHIDProductIDKey: product,
+                kIOHIDDeviceUsagePageKey: A50X.vendorUsagePage,
             ]
         }
         IOHIDManagerSetDeviceMatchingMultiple(manager, matching as CFArray)
